@@ -1,0 +1,14 @@
+{
+  "name": "bugre",
+  "version": "1.0.0",
+  "description": "Bot de figurinhas para WhatsApp com código de pareamento",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js"
+  },
+  "dependencies": {
+    "@whiskeysockets/baileys": "^6.7.18",
+    "pino": "^9.4.0",
+    "sharp": "^0.33.5"
+  }
+}
