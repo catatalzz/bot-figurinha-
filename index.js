@@ -6,8 +6,6 @@ const {
 } = require("@whiskeysockets/baileys");
 
 const P = require("pino");
-const qrcode = require("qrcode-terminal");
-const sharp = require("sharp");
 const fs = require("fs");
 const path = require("path");
 const { execFile } = require("child_process");
@@ -16,54 +14,64 @@ const config = require("./config");
 
 const PREFIX = config.prefixo;
 
-const TEMP_DIR = path.join(__dirname, "temp");
 const AUTH_DIR = path.join(__dirname, "auth");
-
-if (!fs.existsSync(TEMP_DIR)) {
-    fs.mkdirSync(TEMP_DIR, { recursive: true });
-}
+const TEMP_DIR = path.join(__dirname, "temp");
 
 if (!fs.existsSync(AUTH_DIR)) {
-    fs.mkdirSync(AUTH_DIR, { recursive: true });
+    fs.mkdirSync(AUTH_DIR, {
+        recursive: true
+    });
 }
+
+if (!fs.existsSync(TEMP_DIR)) {
+    fs.mkdirSync(TEMP_DIR, {
+        recursive: true
+    });
+}
+
+
+// ======================================================
+// UTILIDADES
+// ======================================================
 
 function log(text) {
     console.log(`[BOT] ${text}`);
 }
 
+
 function sleep(ms) {
-    return new Promise(resolve => setTimeout(resolve, ms));
+    return new Promise(resolve => {
+        setTimeout(resolve, ms);
+    });
 }
 
-function getSender(message) {
+
+function getSender(msg) {
     return (
-        message.key.participant ||
-        message.key.remoteJid ||
+        msg.key.participant ||
+        msg.key.remoteJid ||
         ""
-    ).split(":")[0];
+    )
+        .split(":")[0];
 }
 
-function isGroup(jid) {
-    return jid.endsWith("@g.us");
-}
 
 function isOwner(jid) {
-    const numero = jid.split("@")[0].split(":")[0];
+    const numero = jid
+        .split("@")[0]
+        .split(":")[0];
 
-    return numero === String(config.dono).replace(/\D/g, "");
+    return numero === String(config.dono)
+        .replace(/\D/g, "");
 }
 
-function getMessageType(message) {
-    if (!message) return null;
 
-    if (message.imageMessage) return "image";
-    if (message.videoMessage) return "video";
-    if (message.documentMessage) return "document";
-
-    return null;
-}
+// ======================================================
+// DOWNLOAD DE MÍDIA
+// ======================================================
 
 async function baixarMidia(message, tipo) {
+
     const stream = await downloadContentFromMessage(
         message,
         tipo
@@ -78,25 +86,15 @@ async function baixarMidia(message, tipo) {
     return Buffer.concat(chunks);
 }
 
-async function criarFigurinhaImagem(buffer) {
-    return await sharp(buffer)
-        .resize(512, 512, {
-            fit: "contain",
-            background: {
-                r: 0,
-                g: 0,
-                b: 0,
-                alpha: 0
-            }
-        })
-        .webp({
-            quality: 90
-        })
-        .toBuffer();
-}
+
+// ======================================================
+// FFmpeg
+// ======================================================
 
 function executarFFmpeg(args) {
+
     return new Promise((resolve, reject) => {
+
         execFile(
             "ffmpeg",
             args,
@@ -104,6 +102,7 @@ function executarFFmpeg(args) {
                 windowsHide: true
             },
             (error, stdout, stderr) => {
+
                 if (error) {
                     console.error(stderr);
                     reject(error);
@@ -116,10 +115,20 @@ function executarFFmpeg(args) {
     });
 }
 
-async function criarFigurinhaAnimada(buffer, extensao = "mp4") {
-    const id = `${Date.now()}_${Math.random()
-        .toString(36)
-        .substring(2, 8)}`;
+
+// ======================================================
+// IMAGEM → FIGURINHA
+// ======================================================
+
+async function criarFigurinhaImagem(
+    buffer,
+    extensao = "jpg"
+) {
+
+    const id =
+        `${Date.now()}_${Math.random()
+            .toString(36)
+            .substring(2, 8)}`;
 
     const entrada = path.join(
         TEMP_DIR,
@@ -131,11 +140,85 @@ async function criarFigurinhaAnimada(buffer, extensao = "mp4") {
         `${id}.webp`
     );
 
-    fs.writeFileSync(entrada, buffer);
+    fs.writeFileSync(
+        entrada,
+        buffer
+    );
 
     try {
+
         await executarFFmpeg([
             "-y",
+
+            "-i",
+            entrada,
+
+            "-vf",
+            "scale=512:512:force_original_aspect_ratio=decrease," +
+            "pad=512:512:(ow-iw)/2:(oh-ih)/2:color=black@0",
+
+            "-c:v",
+            "libwebp",
+
+            "-quality",
+            "90",
+
+            "-preset",
+            "picture",
+
+            saida
+        ]);
+
+        return fs.readFileSync(
+            saida
+        );
+
+    } finally {
+
+        try {
+            fs.unlinkSync(entrada);
+        } catch {}
+
+        try {
+            fs.unlinkSync(saida);
+        } catch {}
+    }
+}
+
+
+// ======================================================
+// VÍDEO → FIGURINHA ANIMADA
+// ======================================================
+
+async function criarFigurinhaAnimada(
+    buffer
+) {
+
+    const id =
+        `${Date.now()}_${Math.random()
+            .toString(36)
+            .substring(2, 8)}`;
+
+    const entrada = path.join(
+        TEMP_DIR,
+        `${id}.mp4`
+    );
+
+    const saida = path.join(
+        TEMP_DIR,
+        `${id}.webp`
+    );
+
+    fs.writeFileSync(
+        entrada,
+        buffer
+    );
+
+    try {
+
+        await executarFFmpeg([
+            "-y",
+
             "-i",
             entrada,
 
@@ -164,8 +247,12 @@ async function criarFigurinhaAnimada(buffer, extensao = "mp4") {
             saida
         ]);
 
-        return fs.readFileSync(saida);
+        return fs.readFileSync(
+            saida
+        );
+
     } finally {
+
         try {
             fs.unlinkSync(entrada);
         } catch {}
@@ -176,7 +263,17 @@ async function criarFigurinhaAnimada(buffer, extensao = "mp4") {
     }
 }
 
-async function enviarFigurinha(sock, jid, buffer) {
+
+// ======================================================
+// ENVIAR FIGURINHA
+// ======================================================
+
+async function enviarFigurinha(
+    sock,
+    jid,
+    buffer
+) {
+
     await sock.sendMessage(
         jid,
         {
@@ -185,7 +282,17 @@ async function enviarFigurinha(sock, jid, buffer) {
     );
 }
 
-async function responder(sock, jid, texto) {
+
+// ======================================================
+// ENVIAR TEXTO
+// ======================================================
+
+async function responder(
+    sock,
+    jid,
+    texto
+) {
+
     await sock.sendMessage(
         jid,
         {
@@ -194,105 +301,176 @@ async function responder(sock, jid, texto) {
     );
 }
 
-async function menu(sock, jid) {
+
+// ======================================================
+// MENU
+// ======================================================
+
+async function menu(
+    sock,
+    jid
+) {
+
     const texto = `
-╭━━━〔 🤖 BOT DE FIGURINHAS 〕━━━╮
-┃
-┃ 🖼️ /s
-┃ ┗ Envie uma imagem com /s
-┃
-┃ 🎬 /s
-┃ ┗ Responda um vídeo com /s
-┃
-┃ 🎞️ /sticker
-┃ ┗ Cria uma figurinha
-┃
-┃ 📋 /menu
-┃ ┗ Mostra este menu
-┃
-┃ ❤️ /ping
-┃ ┗ Testa o bot
-┃
-┃ ℹ️ /info
-┃ ┗ Informações do bot
-┃
-╰━━━━━━━━━━━━━━━━━━━━━━━━━━╯
 
-📌 Como usar:
+╭━━━━━━━━━━━━━━━━━━━━━━╮
+┃   🤖 NUNUU STICKER   ┃
+╰━━━━━━━━━━━━━━━━━━━━━━╯
 
-1. Envie uma imagem.
-2. Responda a imagem com:
-   /s
+🖼️ FIGURINHAS
 
-Ou:
+/s
+→ Responda uma imagem.
 
-1. Responda um vídeo/GIF.
-2. Digite:
-   /s
+/sticker
+→ Responda uma imagem.
 
-🤖 ${config.nomeBot}
+/figurinha
+→ Responda uma imagem.
+
+
+🎬 VÍDEOS
+
+/s
+→ Responda um vídeo.
+
+
+📋 OUTROS
+
+/menu
+→ Mostra este menu.
+
+ /ping
+→ Testa o bot.
+
+ /info
+→ Informações do bot.
+
+
+━━━━━━━━━━━━━━━━━━━━━━
+
+🤖 Bot funcionando!
+🇧🇷 Português
 `;
 
-    await responder(sock, jid, texto);
+    await responder(
+        sock,
+        jid,
+        texto
+    );
 }
 
-async function processarComando(sock, msg) {
-    const jid = msg.key.remoteJid;
 
-    if (!jid) return;
+// ======================================================
+// PROCESSAR COMANDOS
+// ======================================================
+
+async function processarComando(
+    sock,
+    msg
+) {
+
+    const jid =
+        msg.key.remoteJid;
+
+    if (!jid) {
+        return;
+    }
 
     const texto =
         msg.message?.conversation ||
-        msg.message?.extendedTextMessage?.text ||
+        msg.message
+            ?.extendedTextMessage
+            ?.text ||
         "";
 
-    const textoLimpo = texto.trim();
+    const textoLimpo =
+        texto.trim();
 
-    if (!textoLimpo.startsWith(PREFIX)) {
+    if (
+        !textoLimpo.startsWith(PREFIX)
+    ) {
         return;
     }
 
-    const partes = textoLimpo
-        .slice(PREFIX.length)
-        .trim()
-        .split(/\s+/);
+    const partes =
+        textoLimpo
+            .slice(PREFIX.length)
+            .trim()
+            .split(/\s+/);
 
-    const comando = (partes.shift() || "")
-        .toLowerCase();
+    const comando =
+        (
+            partes.shift() ||
+            ""
+        ).toLowerCase();
 
-    const sender = getSender(msg);
 
-    if (comando === "menu" || comando === "help") {
-        await menu(sock, jid);
+    // ==================================================
+    // MENU
+    // ==================================================
+
+    if (
+        comando === "menu" ||
+        comando === "help"
+    ) {
+
+        await menu(
+            sock,
+            jid
+        );
+
         return;
     }
 
-    if (comando === "ping") {
+
+    // ==================================================
+    // PING
+    // ==================================================
+
+    if (
+        comando === "ping"
+    ) {
+
         await responder(
             sock,
             jid,
             "🏓 Pong!\n\n🤖 Bot funcionando normalmente."
         );
+
         return;
     }
 
-    if (comando === "info") {
+
+    // ==================================================
+    // INFO
+    // ==================================================
+
+    if (
+        comando === "info"
+    ) {
+
         await responder(
             sock,
             jid,
             `🤖 ${config.nomeBot}
 
-📌 Bot de figurinhas para WhatsApp
-🖼️ Imagens: SIM
-🎬 Vídeos: SIM
-🎞️ GIFs: SIM
-🇧🇷 Português
+🖼️ Imagens: ✅
+🎬 Vídeos: ✅
+🔐 Pareamento por código: ✅
+📱 WhatsApp: ✅
+🇧🇷 Português: ✅
 
-👑 Dono: ${config.dono}`
+Prefixo: ${PREFIX}`
         );
 
         return;
     }
+
+
+    // ==================================================
+    // COMANDOS DE FIGURINHA
+    // ==================================================
 
     if (
         comando !== "s" &&
@@ -302,53 +480,69 @@ async function processarComando(sock, msg) {
         return;
     }
 
+
     await responder(
         sock,
         jid,
         "⏳ Criando sua figurinha..."
     );
 
+
     try {
+
         const quoted =
-            msg.message?.extendedTextMessage
+            msg.message
+                ?.extendedTextMessage
                 ?.contextInfo
                 ?.quotedMessage;
 
-        let alvo = quoted;
+        let alvo =
+            quoted ||
+            msg.message;
 
-        if (!alvo) {
-            alvo = msg.message;
-        }
 
-        if (!alvo) {
-            await responder(
-                sock,
-                jid,
-                "❌ Não encontrei nenhuma mídia."
-            );
-            return;
-        }
+        // ==============================================
+        // IMAGEM
+        // ==============================================
 
-        if (alvo.imageMessage) {
-            const buffer = await baixarMidia(
-                alvo.imageMessage,
-                "image"
-            );
+        if (
+            alvo?.imageMessage
+        ) {
+
+            const imagem =
+                alvo.imageMessage;
+
+            const buffer =
+                await baixarMidia(
+                    imagem,
+                    "image"
+                );
+
+
+            let extensao = "jpg";
+
+            const mimetype =
+                imagem.mimetype || "";
 
             if (
-                buffer.length >
-                config.maxImageSizeMB * 1024 * 1024
+                mimetype.includes("png")
             ) {
-                await responder(
-                    sock,
-                    jid,
-                    "❌ A imagem é muito grande."
-                );
-                return;
+                extensao = "png";
             }
 
+            if (
+                mimetype.includes("webp")
+            ) {
+                extensao = "webp";
+            }
+
+
             const sticker =
-                await criarFigurinhaImagem(buffer);
+                await criarFigurinhaImagem(
+                    buffer,
+                    extensao
+                );
+
 
             await enviarFigurinha(
                 sock,
@@ -359,17 +553,27 @@ async function processarComando(sock, msg) {
             return;
         }
 
-        if (alvo.videoMessage) {
-            const buffer = await baixarMidia(
-                alvo.videoMessage,
-                "video"
-            );
+
+        // ==============================================
+        // VÍDEO
+        // ==============================================
+
+        if (
+            alvo?.videoMessage
+        ) {
+
+            const buffer =
+                await baixarMidia(
+                    alvo.videoMessage,
+                    "video"
+                );
+
 
             const sticker =
                 await criarFigurinhaAnimada(
-                    buffer,
-                    "mp4"
+                    buffer
                 );
+
 
             await enviarFigurinha(
                 sock,
@@ -379,6 +583,11 @@ async function processarComando(sock, msg) {
 
             return;
         }
+
+
+        // ==============================================
+        // NADA ENCONTRADO
+        // ==============================================
 
         await responder(
             sock,
@@ -390,165 +599,375 @@ Envie uma imagem/vídeo ou responda uma mídia com:
 ${PREFIX}s`
         );
 
-    } catch (error) {
-        console.error(error);
+    } catch (erro) {
+
+        console.error(
+            "Erro ao criar figurinha:",
+            erro
+        );
 
         await responder(
             sock,
             jid,
             `❌ Não consegui criar a figurinha.
 
-Verifique se o FFmpeg está instalado e tente novamente.`
+Verifique se o FFmpeg está instalado:
+
+ffmpeg -version`
         );
     }
 }
 
+
+// ======================================================
+// CONEXÃO WHATSAPP
+// ======================================================
+
 async function iniciarBot() {
+
     const {
         state,
         saveCreds
-    } = await useMultiFileAuthState(AUTH_DIR);
+    } = await useMultiFileAuthState(
+        AUTH_DIR
+    );
 
-    const sock = makeWASocket({
-        auth: state,
 
-        logger: P({
-            level: "silent"
-        }),
+    const sock =
+        makeWASocket({
 
-        printQRInTerminal: false,
+            auth: state,
 
-        browser: [
-            config.nomeBot,
-            "Chrome",
-            "1.0.0"
-        ]
-    });
+            logger: P({
+                level: "silent"
+            }),
+
+            // IMPORTANTE:
+            // NÃO MOSTRA QR CODE
+            printQRInTerminal: false,
+
+            browser: [
+                "NUNUU STICKER",
+                "Chrome",
+                "1.0.0"
+            ]
+        });
+
+
+    // ==================================================
+    // SALVAR AUTENTICAÇÃO
+    // ==================================================
 
     sock.ev.on(
         "creds.update",
         saveCreds
     );
 
+
+    // ==================================================
+    // CONEXÃO
+    // ==================================================
+
+    let codigoSolicitado = false;
+
+
     sock.ev.on(
         "connection.update",
         async update => {
+
             const {
                 connection,
-                lastDisconnect,
-                qr
+                lastDisconnect
             } = update;
 
-            if (qr) {
-                console.clear();
 
-                console.log(`
-╔══════════════════════════════════╗
-║      🤖 BOT DE FIGURINHAS        ║
-╠══════════════════════════════════╣
-║                                  ║
-║  Escaneie o QR Code abaixo       ║
-║  usando o WhatsApp.              ║
-║                                  ║
-╚══════════════════════════════════╝
-`);
+            // ==========================================
+            // CÓDIGO DE PAREAMENTO
+            // ==========================================
 
-                qrcode.generate(
-                    qr,
-                    {
-                        small: true
+            if (
+                connection === "connecting" &&
+                !state.creds.registered &&
+                !codigoSolicitado
+            ) {
+
+                codigoSolicitado = true;
+
+                try {
+
+                    const numero =
+                        String(
+                            config.numero
+                        )
+                        .replace(
+                            /\D/g,
+                            ""
+                        );
+
+
+                    if (!numero) {
+
+                        console.log("");
+                        console.log(
+                            "❌ ERRO: configure seu número no config.js"
+                        );
+
+                        return;
                     }
-                );
+
+
+                    const codigo =
+                        await sock.requestPairingCode(
+                            numero
+                        );
+
+
+                    console.log("");
+                    console.log(
+                        "=========================================="
+                    );
+                    console.log(
+                        "          🤖 NUNUU STICKER"
+                    );
+                    console.log(
+                        "=========================================="
+                    );
+                    console.log("");
+                    console.log(
+                        "🔐 CÓDIGO DE PAREAMENTO:"
+                    );
+                    console.log("");
+                    console.log(
+                        `              ${codigo}`
+                    );
+                    console.log("");
+                    console.log(
+                        "📱 NO WHATSAPP:"
+                    );
+                    console.log(
+                        "Aparelhos conectados"
+                    );
+                    console.log(
+                        "→ Conectar aparelho"
+                    );
+                    console.log(
+                        "→ Conectar com número de telefone"
+                    );
+                    console.log("");
+                    console.log(
+                        "=========================================="
+                    );
+                    console.log("");
+
+                } catch (erro) {
+
+                    codigoSolicitado = false;
+
+                    console.error(
+                        "❌ Erro ao gerar código de pareamento:"
+                    );
+
+                    console.error(
+                        erro
+                    );
+                }
             }
 
-            if (connection === "open") {
+
+            // ==========================================
+            // CONECTADO
+            // ==========================================
+
+            if (
+                connection === "open"
+            ) {
+
                 console.clear();
 
-                log("✅ WhatsApp conectado!");
-                log(`🤖 ${config.nomeBot}`);
-                log(`📌 Prefixo: ${PREFIX}`);
-                log("🖼️ Figurinhas de imagem: OK");
-                log("🎬 Figurinhas animadas: OK");
-
+                console.log("");
+                console.log(
+                    "=========================================="
+                );
+                console.log(
+                    "       🤖 NUNUU STICKER ONLINE"
+                );
+                console.log(
+                    "=========================================="
+                );
+                console.log("");
+                console.log(
+                    "✅ WhatsApp conectado!"
+                );
+                console.log(
+                    "🖼️ Figurinhas de imagem: OK"
+                );
+                console.log(
+                    "🎬 Figurinhas animadas: OK"
+                );
+                console.log(
+                    "🔐 Pareamento por código: OK"
+                );
+                console.log("");
+                console.log(
+                    `📌 Prefixo: ${PREFIX}`
+                );
                 console.log("");
                 console.log(
                     "Digite /menu no WhatsApp."
                 );
+                console.log("");
             }
 
-            if (connection === "close") {
+
+            // ==========================================
+            // CONEXÃO FECHADA
+            // ==========================================
+
+            if (
+                connection === "close"
+            ) {
+
                 const statusCode =
                     lastDisconnect
                         ?.error
                         ?.output
                         ?.statusCode;
 
+
                 const shouldReconnect =
                     statusCode !==
                     DisconnectReason.loggedOut;
 
-                if (shouldReconnect) {
-                    log(
-                        "🔄 Conexão perdida. Reconectando..."
+
+                console.log("");
+                console.log(
+                    "⚠️ Conexão encerrada."
+                );
+                console.log(
+                    `Código: ${statusCode}`
+                );
+
+
+                if (
+                    shouldReconnect
+                ) {
+
+                    console.log(
+                        "🔄 Reconectando..."
                     );
 
-                    await sleep(3000);
+                    await sleep(
+                        3000
+                    );
 
                     iniciarBot();
+
                 } else {
-                    log(
-                        "❌ WhatsApp desconectado."
+
+                    console.log(
+                        "❌ Sessão desconectada."
                     );
-                    log(
-                        "Apague a pasta auth e conecte novamente."
+
+                    console.log(
+                        "Apague a pasta auth e faça um novo pareamento."
                     );
                 }
             }
         }
     );
 
+
+    // ==================================================
+    // RECEBER MENSAGENS
+    // ==================================================
+
     sock.ev.on(
         "messages.upsert",
         async ({ messages }) => {
-            const msg = messages[0];
 
-            if (!msg) return;
+            for (
+                const msg of messages
+            ) {
 
-            if (msg.key.fromMe) return;
+                if (!msg) {
+                    continue;
+                }
 
-            try {
-                await processarComando(
-                    sock,
-                    msg
-                );
-            } catch (error) {
-                console.error(
-                    "Erro ao processar mensagem:",
-                    error
-                );
+                if (
+                    msg.key.fromMe
+                ) {
+                    continue;
+                }
+
+                if (
+                    !msg.message
+                ) {
+                    continue;
+                }
+
+
+                try {
+
+                    await processarComando(
+                        sock,
+                        msg
+                    );
+
+                } catch (erro) {
+
+                    console.error(
+                        "❌ Erro ao processar mensagem:",
+                        erro
+                    );
+                }
             }
         }
     );
 }
 
+
+// ======================================================
+// TRATAMENTO DE ERROS
+// ======================================================
+
 process.on(
     "uncaughtException",
-    error => {
+    erro => {
+
         console.error(
-            "Erro não tratado:",
-            error
+            "❌ Erro não tratado:",
+            erro
         );
     }
 );
 
+
 process.on(
     "unhandledRejection",
-    error => {
+    erro => {
+
         console.error(
-            "Promise rejeitada:",
-            error
+            "❌ Promise rejeitada:",
+            erro
         );
     }
 );
+
+
+// ======================================================
+// INICIAR
+// ======================================================
+
+console.log("");
+console.log(
+    "🤖 Iniciando NUNUU STICKER..."
+);
+console.log(
+    "🔐 Modo: código de pareamento"
+);
+console.log(
+    "🚫 QR Code: DESATIVADO"
+);
+console.log("");
 
 iniciarBot();
